@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>{{{baseCss}}}</style>
+</head>
+<body>
+
+<div class="header">
+  {{#if settings.logo_url}}
+    <img src="{{settings.logo_url}}" class="logo" />
+  {{/if}}
+
+  <div>
+    <h2>Quotation</h2>
+    <p>No: {{quotation.quotation_number}}</p>
+    <p>Date: {{today}}</p>
+  </div>
+</div>
+
+<hr />
+
+<p>
+  <strong>{{quotation.client_name}}</strong><br />
+  {{quotation.company}}
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Item</th>
+      {{#if show_pax}}<th>PAX</th>{{/if}}
+      <th>Qty</th>
+      <th>Rate</th>
+      <th>Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{#each quotation.items}}
+    <tr>
+      <td>{{inc @index}}</td>
+      <td>{{title}}</td>
+      {{#if ../show_pax}}<td>{{pax}}</td>{{/if}}
+      <td>{{qty}}</td>
+      <td>{{currency rate}}</td>
+      <td>{{currency total}}</td>
+    </tr>
+    {{/each}}
+  </tbody>
+</table>
+
+<h3 style="text-align:right">
+  Grand Total: {{currency quotation.grand_total}}
+</h3>
+
+{{{settings.terms_conditions_html}}}
+
+</body>
+</html>

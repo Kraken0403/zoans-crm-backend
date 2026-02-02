@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>{{{baseCss}}}</style>
+</head>
+<body>
+
+<!-- =========================
+     HEADER
+========================= -->
+<div class="header" style="text-align:center; margin-bottom:20px;">
+  {{#if settings.logo_url}}
+    <div style="margin-bottom:10px;">
+      <img
+        src="{{settings.logo_url}}"
+        class="logo"
+        style="max-height:80px; max-width:200px; object-fit:contain;"
+      />
+    </div>
+  {{/if}}
+</div>
+
+<h3 class="title">Quotation</h3>
+<h4>{{quotation.quotation_number}}</h4>
+
+<!-- =========================
+     CLIENT INFO
+========================= -->
+<p>
+  <strong>{{quotation.first_name}} {{quotation.last_name}}</strong><br />
+  {{#if quotation.company_name}}{{quotation.company_name}}<br />{{/if}}
+  {{#if quotation.contact_name}}Contact: {{quotation.contact_name}}<br />{{/if}}
+  {{#if quotation.email}}Email: {{quotation.email}}<br />{{/if}}
+  {{#if quotation.phone_number}}Phone: {{quotation.phone_number}}<br />{{/if}}
+  {{#if quotation.gst_number}}GST: {{quotation.gst_number}}<br />{{/if}}
+</p>
+
+<p>
+  To<br/>
+  <strong>{{quotation.first_name}} {{quotation.last_name}}</strong>
+</p>
+
+<!-- =========================
+     COVER LETTER
+========================= -->
+{{#if settings.cover_letter_html}}
+  <div class="rich">
+    {{{settings.cover_letter_html}}}
+  </div>
+{{/if}}
+
+<!-- =========================
+     CATEGORY-WISE ITEMS
+========================= -->
+<div class="page-break"> 
+<h2 class="">Quotation Items</h2>
+
+{{#each quotation.categoryGroups}}
+
+  <div class="category-section">
+
+    <h3 style="margin-top:30px; margin-bottom:10px;">
+      {{category_name}}
+    </h3>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Item</th>
+          <th>Brand</th>
+          <th>Qty</th>
+          <th>Rate</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {{#each items}}
+          <tr>
+            <td>{{inc @index}}</td>
+            <td>
+              <strong>{{title}}</strong>
+              {{#if sku}}<br /><small>SKU: {{sku}}</small>{{/if}}
+            </td>
+            <td>{{brand}}</td>
+            <td>{{qty}}</td>
+            <td>
+              {{currency rate}}
+              {{#if rateLabel}}
+                <br /><small>/ {{rateLabel}}</small>
+              {{/if}}
+            </td>
+            <td>{{currency total}}</td>
+          </tr>
+        {{/each}}
+      </tbody>
+    </table>
+
+    <!-- CATEGORY SUMMARY -->
+    <table class="category-summary" style="margin-top:10px; width:40%; float:right;">
+      <tr>
+        <td style="text-align:left;">Sub Total</td>
+        <td style="text-align:right;">{{currency sub_total}}</td>
+      </tr>
+
+      {{#if discount_total}}
+        <tr>
+          <td style="text-align:left;">Discount</td>
+          <td style="text-align:right;">- {{currency discount_total}}</td>
+        </tr>
+      {{/if}}
+
+      {{#if tax_total}}
+        <tr>
+          <td style="text-align:left;">Tax</td>
+          <td style="text-align:right;">{{currency tax_total}}</td>
+        </tr>
+      {{/if}}
+
+      <tr>
+        <th style="text-align:left;">Category Total</th>
+        <th style="text-align:right;">{{currency grand_total}}</th>
+      </tr>
+    </table>
+
+    <div style="clear:both;"></div>
+
+  </div>
+
+{{/each}}
+
+<!-- =========================
+     GRAND TOTAL
+========================= -->
+
+<hr style="margin-top:40px;" />
+
+<table style="margin-top:10px; width:40%; float:right;">
+  <tr>
+    <th style="text-align:left;">Grand Total</th>
+    <th style="text-align:right;">
+      {{currency quotation.grand_total}}
+    </th>
+  </tr>
+</table>
+
+<div class="page-break"> 
+  {{#if settings.terms_conditions_html}}
+  <hr style="margin-top:40px;" />
+  <h3>Terms & Conditions</h3>
+  <div class="rich">
+    {{{settings.terms_conditions_html}}}
+  </div>
+{{/if}}
+
+<!-- =========================
+     FOOTER NOTES
+========================= -->
+{{#if settings.footer_notes_html}}
+  <div class="rich" style="margin-top:20px;">
+    {{{settings.footer_notes_html}}}
+  </div>
+{{/if}}
+</div>
+
+
+</body>
+</html>

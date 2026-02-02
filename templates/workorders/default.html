@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>{{{baseCss}}}</style>
+</head>
+<body>
+
+<!-- =========================
+     HEADER
+========================= -->
+<div class="header">
+  {{#if settings.logo_url}}
+    <img src="{{settings.logo_url}}" class="logo" />
+  {{/if}}
+</div>
+
+<h2 class="title">Work Order</h2>
+<h4 class="subtitle">{{workOrder.work_order_number}}</h4>
+
+<!-- =========================
+     CLIENT INFO
+========================= -->
+<p>
+  <strong>{{workOrder.first_name}} {{workOrder.last_name}}</strong><br />
+  {{#if workOrder.company_name}}{{workOrder.company_name}}<br />{{/if}}
+  {{#if workOrder.email}}Email: {{workOrder.email}}<br />{{/if}}
+  {{#if workOrder.phone_number}}Phone: {{workOrder.phone_number}}<br />{{/if}}
+  {{#if workOrder.gst_number}}GST: {{workOrder.gst_number}}<br />{{/if}}
+</p>
+
+<p>
+  <strong>Quotation:</strong> {{workOrder.quotation_number}}<br />
+  <strong>Issue Date:</strong> {{workOrder.issue_date}}<br />
+  {{#if workOrder.site_name}}
+    <strong>Site:</strong> {{workOrder.site_name}}
+  {{/if}}
+</p>
+
+<!-- =========================
+     ITEMS TABLE
+========================= -->
+<h3>Work Order Items</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Item</th>
+      <th>Brand</th>
+      <th>Qty</th>
+      <th>Rate</th>
+      <th>Total</th>
+    </tr>
+  </thead>
+
+  <tbody>
+    {{#each workOrder.items}}
+      <tr>
+        <td>{{inc @index}}</td>
+        <td>{{product_name}}</td>
+        <td>{{brand}}</td>
+        <td>{{quantity}}</td>
+        <td>{{currency unit_price}}</td>
+        <td>{{currency line_total}}</td>
+      </tr>
+    {{/each}}
+  </tbody>
+</table>
+
+<!-- =========================
+     GRAND TOTAL
+========================= -->
+<table class="summary">
+  <tr>
+    <th>Grand Total</th>
+    <th class="right">{{currency workOrder.grand_total}}</th>
+  </tr>
+</table>
+
+<!-- =========================
+     NOTES
+========================= -->
+{{#if workOrder.notes}}
+  <h3>Notes</h3>
+  <p>{{workOrder.notes}}</p>
+{{/if}}
+
+<!-- =========================
+     TERMS
+========================= -->
+{{#if settings.terms_conditions_html}}
+  <hr />
+  <h3>Terms & Conditions</h3>
+  <div class="rich">
+    {{{settings.terms_conditions_html}}}
+  </div>
+{{/if}}
+
+<!-- =========================
+     FOOTER
+========================= -->
+<p class="footer">
+  Generated on {{today}}
+</p>
+
+</body>
+</html>
