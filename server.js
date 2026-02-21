@@ -21,24 +21,48 @@ const activityRoutes = require('./routes/activityRoutes')
 const notesRoutes = require('./routes/notesRoutes')
 const filesRoutes = require('./routes/filesRoutes')
 const uploadRoutes = require('./routes/upload.routes');
+const invoiceRoutes = require('./routes/invoiceRoutes');
+const invoiceSettingsRoutes = require('./routes/invoiceSettingsRoutes');
+
 const cookieParser = require('cookie-parser');
-
-
-
 const path = require("path");
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:4000'
+  ];
 
 // Middleware
+
 app.use(cors({
-    origin: 'http://localhost:3000',
-    credentials: true
+    origin: function (origin, callback) {
+  
+      // allow requests with no origin (like Postman or server-side calls)
+      if (!origin) return callback(null, true);
+  
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+  
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
   }));
+
+app.options('*', cors());
+
+  
 app.use(bodyParser.json({limit: '10mb'}));
 app.use(cookieParser());
+
+app.use('/api/public', require('./routes/public'));
+
 
 // Routes
 app.use('/auth', authRoutes); 
@@ -63,6 +87,8 @@ app.use('/api', activityRoutes);
 app.use('/api', notesRoutes);
 app.use('/api', filesRoutes);
 app.use('/api', uploadRoutes);
+app.use('/api', invoiceRoutes);
+app.use('/api', invoiceSettingsRoutes);
 
 
 

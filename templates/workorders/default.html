@@ -31,11 +31,37 @@
 
 <p>
   <strong>Quotation:</strong> {{workOrder.quotation_number}}<br />
-  <strong>Issue Date:</strong> {{workOrder.issue_date}}<br />
+  <strong>Issue Date:</strong> {{workOrder.issue_date_formatted}}<br />
   {{#if workOrder.site_name}}
     <strong>Site:</strong> {{workOrder.site_name}}
   {{/if}}
 </p>
+
+<!-- =========================
+     EVENT DETAILS (CATERING ONLY)
+========================= -->
+{{#if isCatering}}
+  <hr />
+  <h3>Event Details</h3>
+
+  <p>
+    {{#if workOrder.event_name}}
+      <strong>Event:</strong> {{workOrder.event_name}}<br />
+    {{/if}}
+
+    {{#if workOrder.event_date_formatted}}
+      <strong>Date:</strong> {{workOrder.event_date_formatted}}<br />
+    {{/if}}
+
+    {{#if workOrder.event_time_formatted}}
+      <strong>Time:</strong> {{workOrder.event_time_formatted}}<br />
+    {{/if}}
+
+    {{#if workOrder.event_location}}
+      <strong>Location:</strong> {{workOrder.event_location}}
+    {{/if}}
+  </p>
+{{/if}}
 
 <!-- =========================
      ITEMS TABLE
@@ -49,8 +75,11 @@
       <th>Item</th>
       <th>Brand</th>
       <th>Qty</th>
-      <th>Rate</th>
-      <th>Total</th>
+
+      {{#unless isCatering}}
+        <th>Rate</th>
+        <th>Total</th>
+      {{/unless}}
     </tr>
   </thead>
 
@@ -61,22 +90,27 @@
         <td>{{product_name}}</td>
         <td>{{brand}}</td>
         <td>{{quantity}}</td>
-        <td>{{currency unit_price}}</td>
-        <td>{{currency line_total}}</td>
+
+        {{#unless ../isCatering}}
+          <td>{{currency unit_price}}</td>
+          <td>{{currency line_total}}</td>
+        {{/unless}}
       </tr>
     {{/each}}
   </tbody>
 </table>
 
 <!-- =========================
-     GRAND TOTAL
+     GRAND TOTAL (HIDE FOR CATERING)
 ========================= -->
-<table class="summary">
-  <tr>
-    <th>Grand Total</th>
-    <th class="right">{{currency workOrder.grand_total}}</th>
-  </tr>
-</table>
+{{#unless isCatering}}
+  <table class="summary">
+    <tr>
+      <th>Grand Total</th>
+      <th class="right">{{currency workOrder.grand_total}}</th>
+    </tr>
+  </table>
+{{/unless}}
 
 <!-- =========================
      NOTES

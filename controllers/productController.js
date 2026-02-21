@@ -4,7 +4,7 @@ const db = require('../config/db');
 
 const getAllProducts = async (req, res) => {
   try {
-    const [categories] = await db.promise().query(
+    const [categories] = await db.query(
       `SELECT id, name, parent_id FROM categories`
     );
 
@@ -22,7 +22,7 @@ const getAllProducts = async (req, res) => {
       return chain.join(' > ');
     };
 
-    const [products] = await db.promise().query(`
+    const [products] = await db.query(`
     SELECT 
       p.id,
       p.name,
@@ -81,7 +81,7 @@ const getProductById = async (req, res) => {
   const { id } = req.params;
 
   try {
-    const [[product]] = await db.promise().query(
+    const [[product]] = await db.query(
       `
       SELECT 
       id,
@@ -122,7 +122,7 @@ const getProductById = async (req, res) => {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    const [variantsRaw] = await db.promise().query(
+    const [variantsRaw] = await db.query(
       `
       SELECT 
         v.id AS variant_id,
@@ -151,7 +151,7 @@ const getProductById = async (req, res) => {
 
     const variantIds = variantsRaw.map(v => v.variant_id);
 
-    const [attrRows] = await db.promise().query(
+    const [attrRows] = await db.query(
       `
       SELECT 
         vav.variant_id,
@@ -212,7 +212,7 @@ const getProductById = async (req, res) => {
 };
 
 
-const createProduct = (req, res) => {
+const createProduct = async (req, res) => {
   const {
     name,
     brand = null,
@@ -220,21 +220,17 @@ const createProduct = (req, res) => {
     description = '',
     image_url = null,
 
-    // Pricing mode
-    cost_pricing_mode = 'absolute', // 'absolute' | 'percentage'
+    cost_pricing_mode = 'absolute',
     cost_discount_percent = null,
 
-    // Cost
     cost_price = 0,
     cost_price_unit = 'piece',
     cost_price_qty = 1,
 
-    // Selling price (required)
     selling_price,
     selling_price_unit = 'piece',
     selling_price_qty = 1,
 
-    // GST
     gst_rate = 0,
     hsn_sac = null,
 
@@ -245,14 +241,8 @@ const createProduct = (req, res) => {
     variants = []
   } = req.body;
 
-  /* ---------------- VALIDATIONS ---------------- */
-
   if (!name) {
     return res.status(400).json({ error: 'Product name is required' });
-  }
-
-  if (brand && brand.length > 100) {
-    return res.status(400).json({ error: 'Brand must be under 100 characters' });
   }
 
   if (selling_price == null || selling_price <= 0) {
@@ -261,116 +251,68 @@ const createProduct = (req, res) => {
     });
   }
 
-  if (gst_rate < 0 || gst_rate > 28) {
-    return res.status(400).json({
-      error: 'Invalid gst_rate'
-    });
-  }
-
-  if (cost_pricing_mode === 'percentage' && cost_price > 0) {
-    return res.status(400).json({
-      error: 'Do not send cost_price when pricing mode is percentage'
-    });
-  }
-
-  if (
-    cost_pricing_mode === 'percentage' &&
-    (cost_discount_percent == null || cost_discount_percent <= 0)
-  ) {
-    return res.status(400).json({
-      error: 'cost_discount_percent is required for percentage pricing'
-    });
-  }
-
-  /* ---------------- COST CALCULATION ---------------- */
-
   let finalCostPrice = cost_price;
 
   if (cost_pricing_mode === 'percentage') {
+    if (!cost_discount_percent || cost_discount_percent <= 0) {
+      return res.status(400).json({
+        error: 'cost_discount_percent is required for percentage pricing'
+      });
+    }
+
     finalCostPrice =
       selling_price * (1 - cost_discount_percent / 100);
   }
 
-  /* ---------------- INSERT PRODUCT ---------------- */
+  let connection;
 
-  const insertProductQuery = `
-    INSERT INTO products (
-      name,
-      brand,
-      category_id,
-      description,
-      image_url,
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
 
-      cost_pricing_mode,
-      cost_discount_percent,
+    const [productResult] = await connection.query(
+      `
+      INSERT INTO products (
+        name, brand, category_id, description, image_url,
+        cost_pricing_mode, cost_discount_percent,
+        cost_price, cost_price_unit, cost_price_qty,
+        selling_price, selling_price_unit, selling_price_qty,
+        gst_rate, hsn_sac,
+        stock, sku, type, is_active
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        name,
+        brand,
+        category_id,
+        description,
+        image_url,
 
-      cost_price,
-      cost_price_unit,
-      cost_price_qty,
+        cost_pricing_mode,
+        cost_discount_percent,
 
-      selling_price,
-      selling_price_unit,
-      selling_price_qty,
+        finalCostPrice,
+        cost_price_unit,
+        cost_price_qty,
 
-      gst_rate,
-      hsn_sac,
+        selling_price,
+        selling_price_unit,
+        selling_price_qty,
 
-      stock,
-      sku,
-      type,
-      is_active
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
+        Number(gst_rate || 0),
+        hsn_sac,
 
-  db.query(
-    insertProductQuery,
-    [
-      name,
-      brand,
-      category_id,
-      description,
-      image_url,
+        stock,
+        sku,
+        type,
+        is_active
+      ]
+    );
 
-      cost_pricing_mode,
-      cost_discount_percent,
+    const productId = productResult.insertId;
 
-      finalCostPrice,
-      cost_price_unit,
-      cost_price_qty,
-
-      selling_price,
-      selling_price_unit,
-      selling_price_qty,
-
-      Number(gst_rate || 0),
-      hsn_sac,
-
-      stock,
-      sku,
-      type,
-      is_active
-    ],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json({
-          error: 'Failed to create product',
-          details: err.message
-        });
-      }
-
-      const productId = result.insertId;
-
-      /* -------- SIMPLE PRODUCT -------- */
-      if (type !== 'variable' || !Array.isArray(variants) || !variants.length) {
-        return res.status(201).json({
-          message: 'Product created successfully',
-          id: productId
-        });
-      }
-
-      /* -------- VARIABLE PRODUCT -------- */
-
+    if (type === 'variable' && Array.isArray(variants) && variants.length) {
       const variantValues = variants.map(v => [
         productId,
         v.sku || '',
@@ -380,27 +322,35 @@ const createProduct = (req, res) => {
         1
       ]);
 
-      const insertVariantsQuery = `
+      await connection.query(
+        `
         INSERT INTO variants
         (product_id, sku, stock, cost, cost_unit, is_active)
         VALUES ?
-      `;
-
-      db.query(insertVariantsQuery, [variantValues], err2 => {
-        if (err2) {
-          return res.status(500).json({
-            error: 'Product created but variants failed',
-            details: err2.message
-          });
-        }
-
-        return res.status(201).json({
-          message: 'Product with variants created successfully',
-          id: productId
-        });
-      });
+        `,
+        [variantValues]
+      );
     }
-  );
+
+    await connection.commit();
+    connection.release();
+
+    return res.status(201).json({
+      message: 'Product created successfully',
+      id: productId
+    });
+
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+
+    return res.status(500).json({
+      error: 'Failed to create product',
+      details: err.message
+    });
+  }
 };
 
 
@@ -442,7 +392,7 @@ const updateProduct = async (req, res) => {
   let connection;
 
   try {
-    connection = await db.promise().getConnection();
+    connection = await db.getConnection();
     await connection.beginTransaction();
 
     /* ---------------- FETCH EXISTING PRODUCT ---------------- */
@@ -640,51 +590,103 @@ const deleteProduct = async (req, res) => {
   let connection;
 
   try {
-    connection = await db.promise().getConnection();
+    connection = await db.getConnection();
     await connection.beginTransaction();
 
+    /* =====================================================
+       1️⃣ CHECK DIRECT PRODUCT USAGE IN QUOTATIONS
+    ===================================================== */
+
+    const [directUsageRows] = await connection.query(
+      `SELECT COUNT(*) AS cnt 
+       FROM quotation_items 
+       WHERE product_id = ?`,
+      [id]
+    );
+
+    const isDirectlyUsed = directUsageRows[0].cnt > 0;
+
+    /* =====================================================
+       2️⃣ FETCH VARIANTS
+    ===================================================== */
+
     const [variants] = await connection.query(
-      'SELECT id FROM variants WHERE product_id = ?',
+      `SELECT id FROM variants WHERE product_id = ?`,
       [id]
     );
 
     const variantIds = variants.map(v => v.id);
 
+    /* =====================================================
+       3️⃣ CHECK VARIANT USAGE IN QUOTATIONS
+    ===================================================== */
+
+    let isVariantUsed = false;
+
     if (variantIds.length) {
-      const [qRows] = await connection.query(
-        `SELECT COUNT(*) AS cnt FROM quotation_items WHERE variant_id IN (?)`,
+      const [variantUsageRows] = await connection.query(
+        `SELECT COUNT(*) AS cnt 
+         FROM quotation_items 
+         WHERE variant_id IN (?)`,
         [variantIds]
       );
 
-      if (qRows[0].cnt > 0) {
-        throw new Error(
-          'Cannot delete product: variants already used in quotations'
-        );
-      }
+      isVariantUsed = variantUsageRows[0].cnt > 0;
+    }
 
+    /* =====================================================
+       4️⃣ IF USED ANYWHERE → ARCHIVE INSTEAD OF DELETE
+    ===================================================== */
+
+    if (isDirectlyUsed || isVariantUsed) {
       await connection.query(
-        'DELETE FROM variant_attribute_values WHERE variant_id IN (?)',
+        `UPDATE products 
+         SET is_active = 0 
+         WHERE id = ?`,
+        [id]
+      );
+
+      await connection.commit();
+      connection.release();
+
+      return res.status(200).json({
+        message: 'Product archived (used in quotations)',
+      });
+    }
+
+    /* =====================================================
+       5️⃣ SAFE HARD DELETE (NOT USED ANYWHERE)
+    ===================================================== */
+
+    if (variantIds.length) {
+      await connection.query(
+        `DELETE FROM variant_attribute_values 
+         WHERE variant_id IN (?)`,
         [variantIds]
       );
 
       await connection.query(
-        'DELETE FROM product_packaging WHERE variant_id IN (?)',
+        `DELETE FROM product_packaging 
+         WHERE variant_id IN (?)`,
         [variantIds]
       );
 
       await connection.query(
-        'DELETE FROM variants WHERE product_id = ?',
+        `DELETE FROM variants 
+         WHERE product_id = ?`,
         [id]
       );
     }
 
     await connection.query(
-      'DELETE FROM product_packaging WHERE product_id = ?',
+      `DELETE FROM product_packaging 
+       WHERE product_id = ?`,
       [id]
     );
 
     const [result] = await connection.query(
-      'DELETE FROM products WHERE id = ?',
+      `DELETE FROM products 
+       WHERE id = ?`,
       [id]
     );
 
@@ -695,8 +697,8 @@ const deleteProduct = async (req, res) => {
     await connection.commit();
     connection.release();
 
-    res.status(200).json({
-      message: 'Product deleted successfully'
+    return res.status(200).json({
+      message: 'Product deleted successfully',
     });
 
   } catch (err) {
@@ -704,87 +706,162 @@ const deleteProduct = async (req, res) => {
       await connection.rollback();
       connection.release();
     }
+
     console.error('❌ deleteProduct:', err);
-    res.status(500).json({
+
+    return res.status(500).json({
       error: 'Failed to delete product',
-      details: err.message
+      details: err.message,
     });
   }
 };
 
 // -------------------- VARIANTS --------------------
-const createVariant = (req, res) => {
-  const { product_id, sku, price, stock } = req.body;
+const createVariant = async (req, res) => {
+  const { product_id, sku, stock, cost_price, cost_price_unit } = req.body;
 
-  if (!product_id || !sku || price === undefined || stock === undefined) {
+  if (!product_id || !sku) {
     return res.status(400).json({ error: 'Missing required fields for variant' });
   }
 
-  const query = `INSERT INTO variants (product_id, sku, price, stock) VALUES (?, ?, ?, ?)`;
+  try {
+    const [result] = await db.query(
+      `
+      INSERT INTO variants 
+      (product_id, sku, stock, cost, cost_unit, is_active)
+      VALUES (?, ?, ?, ?, ?, 1)
+      `,
+      [
+        product_id,
+        sku,
+        stock || 0,
+        cost_price || 0,
+        cost_price_unit || 'piece'
+      ]
+    );
 
-  db.query(query, [product_id, sku, price, stock], (err, result) => {
-    if (err) return res.status(500).json({ error: 'Failed to create variant', details: err.message });
-    res.status(201).json({ message: 'Variant created successfully', variantId: result.insertId });
-  });
+    res.status(201).json({
+      message: 'Variant created successfully',
+      variantId: result.insertId
+    });
+
+  } catch (err) {
+    console.error('createVariant error:', err);
+    res.status(500).json({
+      error: 'Failed to create variant',
+      details: err.message
+    });
+  }
 };
 
-const getVariantByProductId = (req, res) => {
-  const query = 'SELECT * FROM variants WHERE product_id = ?';
-  db.query(query, [req.params.id], (err, result) => {
-    if (err) return res.status(500).json({ error: 'Failed to fetch variants', details: err.message });
-    res.status(200).json(result);
-  });
+
+const getVariantByProductId = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `
+      SELECT * 
+      FROM variants 
+      WHERE product_id = ? AND is_active = 1
+      `,
+      [req.params.id]
+    );
+
+    res.status(200).json(rows);
+
+  } catch (err) {
+    console.error('getVariantByProductId error:', err);
+    res.status(500).json({
+      error: 'Failed to fetch variants',
+      details: err.message
+    });
+  }
 };
+
 
 
 // -------------------- VARIANT + ATTRIBUTES (COMBINED) --------------------
-const createVariantWithAttributes = (req, res) => {
-  const { product_id, stock, sku, price, attribute_option_ids } = req.body;
+const createVariantWithAttributes = async (req, res) => {
+  const { product_id, stock, sku, cost_price, cost_price_unit, attribute_option_ids } = req.body;
 
-  if (!product_id || !sku || !price || !Array.isArray(attribute_option_ids) || attribute_option_ids.length === 0) {
+  if (!product_id || !sku || !Array.isArray(attribute_option_ids) || !attribute_option_ids.length) {
     return res.status(400).json({ error: 'Required fields missing' });
   }
 
-  const productTypeQuery = 'SELECT type FROM products WHERE id = ?';
-  db.query(productTypeQuery, [product_id], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Database error', details: err.message });
+  let connection;
 
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'Product not found' });
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    const [[product]] = await connection.query(
+      `SELECT type FROM products WHERE id = ?`,
+      [product_id]
+    );
+
+    if (!product) {
+      throw new Error('Product not found');
     }
 
-    if (results[0].type !== 'variable') {
-      return res.status(400).json({ error: 'Cannot create variants for a simple product' });
+    if (product.type !== 'variable') {
+      throw new Error('Cannot create variants for a simple product');
     }
 
-    const insertVariantQuery = `
-      INSERT INTO variants (product_id, stock, sku, price)
-      VALUES (?, ?, ?, ?)
-    `;
+    const [variantResult] = await connection.query(
+      `
+      INSERT INTO variants
+      (product_id, stock, sku, cost, cost_unit, is_active)
+      VALUES (?, ?, ?, ?, ?, 1)
+      `,
+      [
+        product_id,
+        stock || 0,
+        sku,
+        cost_price || 0,
+        cost_price_unit || 'piece'
+      ]
+    );
 
-    db.query(insertVariantQuery, [product_id, stock, sku, price], (err2, result) => {
-      if (err2) return res.status(500).json({ error: 'Failed to create variant', details: err2.message });
+    const variantId = variantResult.insertId;
 
-      const variantId = result.insertId;
+    const values = attribute_option_ids.map(id => [variantId, id]);
 
-      const variantAttrValues = attribute_option_ids.map(id => [variantId, id]);
-      const variantAttrQuery = `
-        INSERT INTO variant_attribute_options (variant_id, attribute_option_id) VALUES ?
-      `;
+    await connection.query(
+      `
+      INSERT INTO variant_attribute_values
+      (variant_id, attribute_option_id)
+      VALUES ?
+      `,
+      [values]
+    );
 
-      db.query(variantAttrQuery, [variantAttrValues], (err3) => {
-        if (err3) return res.status(500).json({ error: 'Failed to link attributes', details: err3.message });
+    await connection.commit();
+    connection.release();
 
-        res.status(201).json({ message: 'Variant created successfully', variantId });
-      });
+    res.status(201).json({
+      message: 'Variant created successfully',
+      variantId
     });
-  });
+
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+
+    console.error('createVariantWithAttributes error:', err);
+
+    res.status(500).json({
+      error: 'Failed to create variant',
+      details: err.message
+    });
+  }
 };
+
 
 
 const getVariantsByProduct = async (req, res) => {
   try {
-    const [variants] = await db.promise().query(
+    const [variants] = await db.query(
       `
       SELECT v.*,
              GROUP_CONCAT(ao.value SEPARATOR ', ') AS attribute_values
@@ -817,7 +894,7 @@ const addVariantAttributeValue = async (req, res) => {
   }
 
   try {
-    await db.promise().query(
+    await db.query(
       `
       INSERT INTO variant_attribute_values
       (variant_id, attribute_option_id)
@@ -840,7 +917,7 @@ const addVariantAttributeValue = async (req, res) => {
 
 const getAttributesForVariant = async (req, res) => {
   try {
-    const [rows] = await db.promise().query(
+    const [rows] = await db.query(
       `
       SELECT a.name AS attribute, ao.value AS optionValue
       FROM variant_attribute_values vav
@@ -862,47 +939,71 @@ const getAttributesForVariant = async (req, res) => {
 };
 
 // -------------------- CATEGORIES --------------------
-const createCategory = (req, res) => {
+const createCategory = async (req, res) => {
   const { category, parent_id } = req.body;
 
-  if (!category) return res.status(400).json({ error: 'Missing required field: category' });
+  if (!category?.trim()) {
+    return res.status(400).json({ error: 'Category name is required' });
+  }
 
-  const slug = category.toLowerCase().replace(/\s+/g, '-');
-  const checkQuery = 'SELECT * FROM categories WHERE slug = ?';
+  const slug = category.trim().toLowerCase().replace(/\s+/g, '-');
 
-  db.query(checkQuery, [slug], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Failed to check slug', details: err.message });
-    if (results.length > 0) return res.status(409).json({ error: 'Slug already exists' });
+  try {
+    // Check duplicate slug
+    const [[existing]] = await db.query(
+      `SELECT id FROM categories WHERE slug = ?`,
+      [slug]
+    );
 
-    const createQuery = 'INSERT INTO categories (name, slug, parent_id) VALUES (?, ?, ?)';
-    db.query(createQuery, [category, slug, parent_id || null], (err2, result) => {
-      if (err2) return res.status(500).json({ error: 'Failed to create category', details: err2.message });
-      res.status(201).json({ message: 'Category created successfully', categoryId: result.insertId });
+    if (existing) {
+      return res.status(409).json({ error: 'Category already exists' });
+    }
+
+    // Validate parent
+    if (parent_id) {
+      const [[parent]] = await db.query(
+        `SELECT id FROM categories WHERE id = ?`,
+        [parent_id]
+      );
+
+      if (!parent) {
+        return res.status(400).json({ error: 'Parent category not found' });
+      }
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO categories (name, slug, parent_id)
+       VALUES (?, ?, ?)`,
+      [category.trim(), slug, parent_id || null]
+    );
+
+    res.status(201).json({
+      message: 'Category created successfully',
+      categoryId: result.insertId
     });
-  });
+
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to create category',
+      details: err.message
+    });
+  }
 };
 
-const getCategories = (req, res) => {
-  const query = `
-    SELECT 
-      c.id,
-      c.name,
-      c.slug,
-      c.parent_id,
-      COUNT(p.id) AS product_count
-    FROM categories c
-    LEFT JOIN products p 
-      ON p.category_id = c.id
-    GROUP BY c.id
-  `;
-
-  db.query(query, (err, results) => {
-    if (err) {
-      return res.status(500).json({
-        error: 'Failed to fetch categories',
-        details: err.message
-      });
-    }
+const getCategories = async (req, res) => {
+  try {
+    const [results] = await db.query(`
+      SELECT 
+        c.id,
+        c.name,
+        c.slug,
+        c.parent_id,
+        COUNT(p.id) AS product_count
+      FROM categories c
+      LEFT JOIN products p 
+        ON p.category_id = c.id
+      GROUP BY c.id
+    `);
 
     const categoriesMap = {};
     const rootCategories = [];
@@ -917,321 +1018,574 @@ const getCategories = (req, res) => {
     // Build tree
     results.forEach(category => {
       if (category.parent_id) {
-        categoriesMap[category.parent_id]?.children.push(category);
+        if (categoriesMap[category.parent_id]) {
+          categoriesMap[category.parent_id].children.push(category);
+        }
       } else {
         rootCategories.push(category);
       }
     });
 
     res.status(200).json(rootCategories);
-  });
+
+  } catch (err) {
+    console.error('getCategories error:', err);
+    res.status(500).json({
+      error: 'Failed to fetch categories',
+      details: err.message
+    });
+  }
 };
 
 
-const getCategoryById = (req, res) => {
-  const query = 'SELECT * FROM categories WHERE id = ?';
-  db.query(query, [req.params.id], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Failed to fetch category', details: err.message });
-    if (results.length === 0) return res.status(404).json({ error: 'Category not found' });
-    res.status(200).json(results[0]);
-  });
+
+const getCategoryById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const [rows] = await db.query(
+      `SELECT * FROM categories WHERE id = ?`,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        error: 'Category not found'
+      });
+    }
+
+    res.status(200).json(rows[0]);
+
+  } catch (err) {
+    console.error('getCategoryById error:', err);
+    res.status(500).json({
+      error: 'Failed to fetch category',
+      details: err.message
+    });
+  }
 };
 
-const getCategoryByName = (req, res) => {
-  const name = req.params.name;
-  const query = 'SELECT * FROM categories WHERE name = ?';
+const getCategoryByName = async (req, res) => {
+  const { name } = req.params;
 
-  db.query(query, [name], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Failed to fetch category by name', details: err.message });
-    if (results.length === 0) return res.status(404).json({ error: 'Category not found' });
-    res.status(200).json(results[0]);
-  });
+  try {
+    const [rows] = await db.query(
+      `SELECT * FROM categories WHERE name = ?`,
+      [name]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        error: 'Category not found'
+      });
+    }
+
+    res.status(200).json(rows[0]);
+
+  } catch (err) {
+    console.error('getCategoryByName error:', err);
+    res.status(500).json({
+      error: 'Failed to fetch category by name',
+      details: err.message
+    });
+  }
 };
 
-const checkCategory = (req, res) => {
+const checkCategory = async (req, res) => {
   const { name } = req.body;
-  if (!name) return res.status(400).json({ error: 'Missing required field: name' });
 
-  const slug = name.toLowerCase().replace(/\s+/g, '-');
-  const query = 'SELECT * FROM categories WHERE slug = ?';
+  if (!name?.trim()) {
+    return res.status(400).json({
+      error: 'Name is required'
+    });
+  }
 
-  db.query(query, [slug], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Failed to check category', details: err.message });
+  const slug = name.trim().toLowerCase().replace(/\s+/g, '-');
 
-    res.status(200).json({ exists: results.length > 0 });
-  });
+  try {
+    const [rows] = await db.query(
+      `SELECT id FROM categories WHERE slug = ?`,
+      [slug]
+    );
+
+    res.status(200).json({
+      exists: rows.length > 0
+    });
+
+  } catch (err) {
+    console.error('checkCategory error:', err);
+    res.status(500).json({
+      error: 'Failed to check category',
+      details: err.message
+    });
+  }
 };
 
-const updateCategory = (req, res) => {
+
+const updateCategory = async (req, res) => {
   const { id } = req.params;
   const { name, parent_id } = req.body;
 
-  const slug = name.toLowerCase().replace(/\s+/g, '-');
+  if (!name?.trim()) {
+    return res.status(400).json({
+      error: 'Category name is required'
+    });
+  }
 
-  const query = `UPDATE categories SET name = ?, slug = ?, parent_id = ? WHERE id = ?`;
-  db.query(query, [name, slug, parent_id || null, id], (err) => {
-    if (err) return res.status(500).json({ error: 'Failed to update category', details: err.message });
-    res.status(200).json({ message: 'Category updated successfully' });
-  });
+  const slug = name.trim().toLowerCase().replace(/\s+/g, '-');
+
+  try {
+    // Prevent self-parent
+    if (Number(parent_id) === Number(id)) {
+      return res.status(400).json({
+        error: 'Category cannot be its own parent'
+      });
+    }
+
+    // Check slug conflict
+    const [[existing]] = await db.query(
+      `SELECT id FROM categories WHERE slug = ? AND id != ?`,
+      [slug, id]
+    );
+
+    if (existing) {
+      return res.status(409).json({
+        error: 'Another category with this name already exists'
+      });
+    }
+
+    await db.query(
+      `UPDATE categories
+       SET name = ?, slug = ?, parent_id = ?
+       WHERE id = ?`,
+      [name.trim(), slug, parent_id || null, id]
+    );
+
+    res.status(200).json({
+      message: 'Category updated successfully'
+    });
+
+  } catch (err) {
+    console.error('updateCategory error:', err);
+    res.status(500).json({
+      error: 'Failed to update category',
+      details: err.message
+    });
+  }
 };
 
-const deleteCategory = (req, res) => {
+
+const deleteCategory = async (req, res) => {
   const { id } = req.params;
 
-  // 1️⃣ Check if category has products
-  const checkProductsQuery =
-    'SELECT COUNT(*) AS count FROM products WHERE category_id = ?';
+  try {
+    const [[productCount]] = await db.query(
+      `SELECT COUNT(*) AS count FROM products WHERE category_id = ?`,
+      [id]
+    );
 
-  db.query(checkProductsQuery, [id], (err, productRows) => {
-    if (err) {
-      return res.status(500).json({
-        error: 'Failed to check products',
-        details: err.message
-      });
-    }
-
-    if (productRows[0].count > 0) {
+    if (productCount.count > 0) {
       return res.status(409).json({
-        error: 'Category has products. Remove or reassign them first.'
+        error: 'Category has products assigned'
       });
     }
 
-    // 2️⃣ Check if category has child categories
-    const checkChildrenQuery =
-      'SELECT COUNT(*) AS count FROM categories WHERE parent_id = ?';
+    const [[childCount]] = await db.query(
+      `SELECT COUNT(*) AS count FROM categories WHERE parent_id = ?`,
+      [id]
+    );
 
-    db.query(checkChildrenQuery, [id], (err2, childRows) => {
-      if (err2) {
-        return res.status(500).json({
-          error: 'Failed to check child categories',
-          details: err2.message
-        });
-      }
-
-      if (childRows[0].count > 0) {
-        return res.status(409).json({
-          error: 'Category has child categories. Delete them first.'
-        });
-      }
-
-      // 3️⃣ Safe to delete
-      const deleteQuery = 'DELETE FROM categories WHERE id = ?';
-
-      db.query(deleteQuery, [id], (err3) => {
-        if (err3) {
-          return res.status(500).json({
-            error: 'Failed to delete category',
-            details: err3.message
-          });
-        }
-
-        res.status(200).json({
-          message: 'Category deleted successfully'
-        });
+    if (childCount.count > 0) {
+      return res.status(409).json({
+        error: 'Category has child categories'
       });
+    }
+
+    const [result] = await db.query(
+      `DELETE FROM categories WHERE id = ?`,
+      [id]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        error: 'Category not found'
+      });
+    }
+
+    res.status(200).json({
+      message: 'Category deleted successfully'
     });
-  });
+
+  } catch (err) {
+    console.error('deleteCategory error:', err);
+    res.status(500).json({
+      error: 'Failed to delete category',
+      details: err.message
+    });
+  }
 };
 
 
 
 // -------------------- ATTRIBUTES --------------------
-const createAttribute = (req, res) => {
+const createAttribute = async (req, res) => {
   const { name } = req.body;
-  if (!name) return res.status(400).json({ error: 'Missing attribute name' });
 
-  const query = `INSERT INTO attributes (name) VALUES (?)`;
-  db.query(query, [name], (err, result) => {
-    if (err) return res.status(500).json({ error: 'Failed to create attribute', details: err.message });
-    res.status(201).json({ message: 'Attribute created', attributeId: result.insertId });
-  });
+  if (!name?.trim()) {
+    return res.status(400).json({ error: 'Attribute name required' });
+  }
+
+  const cleanName = name.trim();
+
+  try {
+    const [[existing]] = await db.query(
+      `SELECT id FROM attributes WHERE name = ?`,
+      [cleanName]
+    );
+
+    if (existing) {
+      return res.status(409).json({
+        error: 'Attribute already exists'
+      });
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO attributes (name) VALUES (?)`,
+      [cleanName]
+    );
+
+    res.status(201).json({
+      message: 'Attribute created',
+      attributeId: result.insertId
+    });
+
+  } catch (err) {
+    console.error('createAttribute error:', err);
+    res.status(500).json({
+      error: 'Failed to create attribute',
+      details: err.message
+    });
+  }
 };
 
-const getAllAttributes = (req, res) => {
-  const query = `SELECT * FROM attributes`;
-  db.query(query, (err, results) => {
-    if (err) return res.status(500).json({ error: 'Failed to fetch attributes', details: err.message });
-    res.status(200).json(results);
-  });
+
+const getAllAttributes = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT * FROM attributes ORDER BY name ASC`
+    );
+
+    res.status(200).json(rows);
+
+  } catch (err) {
+    console.error('getAllAttributes error:', err);
+    res.status(500).json({
+      error: 'Failed to fetch attributes',
+      details: err.message
+    });
+  }
 };
 
 
 // -------------------- UPDATE ATTRIBUTE --------------------
-const updateAttribute = (req, res) => {
+const updateAttribute = async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
 
-  if (!name) {
-    return res.status(400).json({ error: 'Missing attribute name' });
+  if (!name?.trim()) {
+    return res.status(400).json({
+      error: 'Attribute name required'
+    });
   }
 
-  const query = `UPDATE attributes SET name = ? WHERE id = ?`;
+  const cleanName = name.trim();
 
-  db.query(query, [name, id], (err, result) => {
-    if (err) {
-      return res.status(500).json({
-        error: 'Failed to update attribute',
-        details: err.message
+  try {
+    // Check if another attribute already has this name
+    const [[existing]] = await db.query(
+      `SELECT id FROM attributes WHERE name = ? AND id != ?`,
+      [cleanName, id]
+    );
+
+    if (existing) {
+      return res.status(409).json({
+        error: 'Another attribute with this name already exists'
       });
     }
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Attribute not found' });
+    const [result] = await db.query(
+      `UPDATE attributes SET name = ? WHERE id = ?`,
+      [cleanName, id]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        error: 'Attribute not found'
+      });
     }
 
-    res.status(200).json({ message: 'Attribute updated successfully' });
-  });
+    res.status(200).json({
+      message: 'Attribute updated successfully'
+    });
+
+  } catch (err) {
+    console.error('updateAttribute error:', err);
+    res.status(500).json({
+      error: 'Failed to update attribute',
+      details: err.message
+    });
+  }
 };
 
 // -------------------- DELETE ATTRIBUTE --------------------
-const deleteAttribute = (req, res) => {
+const deleteAttribute = async (req, res) => {
   const { id } = req.params;
 
-  // 1️⃣ Check if attribute is used anywhere
-  const usageQuery = `
-    SELECT COUNT(*) AS count
-    FROM product_attribute_options pao
-    JOIN attribute_options ao ON ao.id = pao.attribute_option_id
-    WHERE ao.attribute_id = ?
-  `;
+  try {
+    // 1️⃣ Check usage
+    const [[usageResult]] = await db.query(`
+      SELECT COUNT(*) AS count
+      FROM product_attribute_options pao
+      JOIN attribute_options ao 
+        ON ao.id = pao.attribute_option_id
+      WHERE ao.attribute_id = ?
+    `, [id]);
 
-  db.query(usageQuery, [id], (err, usageResult) => {
-    if (err) {
-      return res.status(500).json({
-        error: 'Failed to check attribute usage',
-        details: err.message
-      });
-    }
-
-    if (usageResult[0].count > 0) {
+    if (usageResult.count > 0) {
       return res.status(409).json({
-        error: 'Attribute is used in products. Remove or replace it first.'
+        error: 'Attribute is used in products. Remove it first.'
       });
     }
 
-    // 2️⃣ Delete attribute options first
-    const deleteOptionsQuery = `DELETE FROM attribute_options WHERE attribute_id = ?`;
+    // 2️⃣ Delete attribute options
+    await db.query(
+      `DELETE FROM attribute_options WHERE attribute_id = ?`,
+      [id]
+    );
 
-    db.query(deleteOptionsQuery, [id], (err) => {
-      if (err) {
-        return res.status(500).json({
-          error: 'Failed to delete attribute options',
-          details: err.message
-        });
-      }
+    // 3️⃣ Delete attribute
+    const [result] = await db.query(
+      `DELETE FROM attributes WHERE id = ?`,
+      [id]
+    );
 
-      // 3️⃣ Delete attribute
-      const deleteAttrQuery = `DELETE FROM attributes WHERE id = ?`;
-
-      db.query(deleteAttrQuery, [id], (err, result) => {
-        if (err) {
-          return res.status(500).json({
-            error: 'Failed to delete attribute',
-            details: err.message
-          });
-        }
-
-        if (result.affectedRows === 0) {
-          return res.status(404).json({ error: 'Attribute not found' });
-        }
-
-        res.status(200).json({ message: 'Attribute deleted successfully' });
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        error: 'Attribute not found'
       });
+    }
+
+    res.status(200).json({
+      message: 'Attribute deleted successfully'
     });
-  });
+
+  } catch (err) {
+    console.error('deleteAttribute error:', err);
+    res.status(500).json({
+      error: 'Failed to delete attribute',
+      details: err.message
+    });
+  }
 };
 
 // -------------------- ATTRIBUTE OPTIONS --------------------
-const createAttributeOption = (req, res) => {
-  const attribute_id = req.params.id;
+const createAttributeOption = async (req, res) => {
+  const { id: attribute_id } = req.params;
   const { value } = req.body;
 
-  if (!attribute_id || !value) {
-    return res.status(400).json({ error: 'Missing required fields' });
+  if (!attribute_id) {
+    return res.status(400).json({ error: 'Attribute ID required' });
   }
 
-  const query = `INSERT INTO attribute_options (attribute_id, value) VALUES (?, ?)`;
-  db.query(query, [attribute_id, value], (err, result) => {
-    if (err) return res.status(500).json({ error: 'Failed to create attribute option', details: err.message });
-    res.status(201).json({ message: 'Attribute option created', optionId: result.insertId });
-  });
+  if (!value?.trim()) {
+    return res.status(400).json({ error: 'Option value required' });
+  }
+
+  const cleanValue = value.trim();
+
+  try {
+    // Check attribute exists
+    const [[attribute]] = await db.query(
+      `SELECT id FROM attributes WHERE id = ?`,
+      [attribute_id]
+    );
+
+    if (!attribute) {
+      return res.status(404).json({ error: 'Attribute not found' });
+    }
+
+    // Check duplicate option
+    const [[existing]] = await db.query(
+      `SELECT id FROM attribute_options 
+       WHERE attribute_id = ? AND value = ?`,
+      [attribute_id, cleanValue]
+    );
+
+    if (existing) {
+      return res.status(409).json({ error: 'Option already exists' });
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO attribute_options (attribute_id, value)
+       VALUES (?, ?)`,
+      [attribute_id, cleanValue]
+    );
+
+    res.status(201).json({
+      message: 'Option created',
+      optionId: result.insertId
+    });
+
+  } catch (err) {
+    console.error('createAttributeOption error:', err);
+    res.status(500).json({
+      error: 'Failed to create option',
+      details: err.message
+    });
+  }
 };
 
-const getAttributeOptions = (req, res) => {
-  const attributeId = req.params.id;
-  const query = `SELECT * FROM attribute_options WHERE attribute_id = ?`;
 
-  db.query(query, [attributeId], (err, results) => {
-    if (err) return res.status(500).json({ error: 'Failed to fetch attribute options', details: err.message });
-    res.status(200).json(results);
-  });
+const getAttributeOptions = async (req, res) => {
+  const { id: attributeId } = req.params;
+
+  if (!attributeId) {
+    return res.status(400).json({ error: 'Attribute ID required' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT * 
+       FROM attribute_options 
+       WHERE attribute_id = ?
+       ORDER BY value ASC`,
+      [attributeId]
+    );
+
+    res.status(200).json(rows);
+
+  } catch (err) {
+    console.error('getAttributeOptions error:', err);
+    res.status(500).json({
+      error: 'Failed to fetch attribute options',
+      details: err.message
+    });
+  }
 };
+
 
 // -------------------- DELETE ATTRIBUTE OPTION --------------------
-const deleteAttributeOption = (req, res) => {
+const deleteAttributeOption = async (req, res) => {
   const { optionId } = req.params;
 
-  // Prevent deleting option used in products
-  const usageQuery = `
-    SELECT COUNT(*) AS count
-    FROM product_attribute_options
-    WHERE attribute_option_id = ?
-  `;
+  if (!optionId) {
+    return res.status(400).json({ error: 'Option ID required' });
+  }
 
-  db.query(usageQuery, [optionId], (err, result) => {
-    if (err) {
-      return res.status(500).json({
-        error: 'Failed to check option usage',
-        details: err.message
-      });
-    }
+  try {
+    // 1️⃣ Check usage
+    const [[usage]] = await db.query(
+      `
+      SELECT COUNT(*) AS count
+      FROM product_attribute_options
+      WHERE attribute_option_id = ?
+      `,
+      [optionId]
+    );
 
-    if (result[0].count > 0) {
+    if (usage.count > 0) {
       return res.status(409).json({
-        error: 'Option is used in products. Remove it from products first.'
+        error: 'Option is used in products. Remove it first.'
       });
     }
 
-    const query = `DELETE FROM attribute_options WHERE id = ?`;
+    // 2️⃣ Delete option
+    const [result] = await db.query(
+      `DELETE FROM attribute_options WHERE id = ?`,
+      [optionId]
+    );
 
-    db.query(query, [optionId], (err, result) => {
-      if (err) {
-        return res.status(500).json({
-          error: 'Failed to delete attribute option',
-          details: err.message
-        });
-      }
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        error: 'Attribute option not found'
+      });
+    }
 
-      if (result.affectedRows === 0) {
-        return res.status(404).json({ error: 'Attribute option not found' });
-      }
-
-      res.status(200).json({ message: 'Attribute option deleted successfully' });
+    res.status(200).json({
+      message: 'Attribute option deleted successfully'
     });
-  });
+
+  } catch (err) {
+    console.error('deleteAttributeOption error:', err);
+    res.status(500).json({
+      error: 'Failed to delete attribute option',
+      details: err.message
+    });
+  }
 };
+
 
 
 // -------------------- ASSIGN ATTRIBUTE TO PRODUCT --------------------
-const assignAttributeToProduct = (req, res) => {
+const assignAttributeToProduct = async (req, res) => {
   const { attribute_option_ids } = req.body;
   const { productId } = req.params;
 
-  if (!Array.isArray(attribute_option_ids) || attribute_option_ids.length === 0) {
-    return res.status(400).json({ error: 'Attribute Option IDs must be a non-empty array' });
+  if (!productId) {
+    return res.status(400).json({ error: 'Product ID required' });
   }
 
-  const values = attribute_option_ids.map(id => [productId, id]);
-  const query = `INSERT INTO product_attribute_options (product_id, attribute_option_id) VALUES ?`;
+  if (!Array.isArray(attribute_option_ids) || !attribute_option_ids.length) {
+    return res.status(400).json({ error: 'Attribute options required' });
+  }
 
-  db.query(query, [values], (err) => {
-    if (err) {
-      return res.status(500).json({ error: 'Failed to assign attributes to product', details: err.message });
+  try {
+    // 1️⃣ Check product exists
+    const [[product]] = await db.query(
+      `SELECT id FROM products WHERE id = ?`,
+      [productId]
+    );
+
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
     }
 
-    res.status(201).json({ message: 'Attributes assigned successfully' });
-  });
+    // 2️⃣ Validate options exist
+    const [options] = await db.query(
+      `SELECT id FROM attribute_options WHERE id IN (?)`,
+      [attribute_option_ids]
+    );
+
+    if (options.length !== attribute_option_ids.length) {
+      return res.status(400).json({
+        error: 'One or more attribute options are invalid'
+      });
+    }
+
+    const values = attribute_option_ids.map(id => [productId, id]);
+
+    await db.query(
+      `
+      INSERT IGNORE INTO product_attribute_options
+      (product_id, attribute_option_id)
+      VALUES ?
+      `,
+      [values]
+    );
+
+    res.status(201).json({
+      message: 'Attributes assigned successfully'
+    });
+
+  } catch (err) {
+    console.error('assignAttributeToProduct error:', err);
+    res.status(500).json({
+      error: 'Failed to assign attributes',
+      details: err.message
+    });
+  }
 };
+
 
 
 // -------------------- PACKAGING --------------------
@@ -1248,8 +1602,8 @@ const addPackaging = (req, res) => {
 
 
 // Add packaging for a simple product
-const addProductPackaging = (req, res) => {
-  const productId = req.params.productId;
+const addProductPackaging = async (req, res) => {
+  const { productId } = req.params;
   const {
     packagingType,
     packagingWeight,
@@ -1260,28 +1614,48 @@ const addProductPackaging = (req, res) => {
     dimensionsUnit
   } = req.body;
 
-  const checkQuery = 'SELECT id FROM product_packaging WHERE product_id = ?';
-  db.query(checkQuery, [productId], (err, existing) => {
-    if (err) return res.status(500).json({ error: 'Error checking existing packaging', details: err.message });
+  try {
+    const [existing] = await db.query(
+      `SELECT id FROM product_packaging WHERE product_id = ?`,
+      [productId]
+    );
 
-    if (existing.length > 0) {
-      return res.status(400).json({ error: 'Packaging already exists for this product.' });
+    if (existing.length) {
+      return res.status(400).json({
+        error: 'Packaging already exists for this product.'
+      });
     }
 
-    const insertQuery = `
+    await db.query(
+      `
       INSERT INTO product_packaging 
       (product_id, packaging_type, packaging_weight, packaging_unit, length, width, height, dimensions_unit)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    db.query(insertQuery, [
-      productId, packagingType, packagingWeight, packagingUnit,
-      length, width, height, dimensionsUnit
-    ], (err2) => {
-      if (err2) return res.status(500).json({ error: 'Failed to add packaging', details: err2.message });
-      res.status(201).json({ message: 'Packaging added successfully.' });
+      `,
+      [
+        productId,
+        packagingType,
+        packagingWeight,
+        packagingUnit,
+        length,
+        width,
+        height,
+        dimensionsUnit
+      ]
+    );
+
+    res.status(201).json({
+      message: 'Packaging added successfully.'
     });
-  });
+
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to add packaging',
+      details: err.message
+    });
+  }
 };
+
 
 
 // Get packaging for a simple product
@@ -1302,8 +1676,8 @@ const getProductPackaging = (req, res) => {
 
 
 // Add packaging for a variant
-const addVariantPackaging = (req, res) => {
-  const variantId = req.params.variantId;
+const addVariantPackaging = async (req, res) => {
+  const { variantId } = req.params;
   const {
     packagingType,
     packagingWeight,
@@ -1314,61 +1688,103 @@ const addVariantPackaging = (req, res) => {
     dimensionsUnit
   } = req.body;
 
-  const checkQuery = 'SELECT id FROM product_packaging WHERE variant_id = ?';
-  db.query(checkQuery, [variantId], (err, existing) => {
-    if (err) return res.status(500).json({ error: 'Error checking existing packaging', details: err.message });
+  try {
+    const [existing] = await db.query(
+      `SELECT id FROM product_packaging WHERE variant_id = ?`,
+      [variantId]
+    );
 
-    if (existing.length > 0) {
-      return res.status(400).json({ error: 'Packaging already exists for this variant.' });
+    if (existing.length) {
+      return res.status(400).json({
+        error: 'Packaging already exists for this variant.'
+      });
     }
 
-    const insertQuery = `
+    await db.query(
+      `
       INSERT INTO product_packaging 
       (variant_id, packaging_type, packaging_weight, packaging_unit, length, width, height, dimensions_unit)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-    db.query(insertQuery, [
-      variantId, packagingType, packagingWeight, packagingUnit,
-      length, width, height, dimensionsUnit
-    ], (err2) => {
-      if (err2) return res.status(500).json({ error: 'Failed to add packaging', details: err2.message });
-      res.status(201).json({ message: 'Packaging added successfully.' });
+      `,
+      [
+        variantId,
+        packagingType,
+        packagingWeight,
+        packagingUnit,
+        length,
+        width,
+        height,
+        dimensionsUnit
+      ]
+    );
+
+    res.status(201).json({
+      message: 'Packaging added successfully.'
     });
-  });
+
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to add packaging',
+      details: err.message
+    });
+  }
 };
+
 
 
 // Remove product packaging
-const removeProductPackaging = (req, res) => {
-  const productId = req.params.productId;
+const removeProductPackaging = async (req, res) => {
+  const { productId } = req.params;
 
-  const deleteQuery = 'DELETE FROM product_packagings WHERE product_id = ?';
-  db.query(deleteQuery, [productId], (err, result) => {
-    if (err) return res.status(500).json({ error: 'Failed to delete packaging', details: err.message });
+  try {
+    const [result] = await db.query(
+      `DELETE FROM product_packaging WHERE product_id = ?`,
+      [productId]
+    );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'No packaging found for this product.' });
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        error: 'No packaging found'
+      });
     }
 
-    res.json({ message: 'Packaging removed successfully.' });
-  });
+    res.json({ message: 'Packaging removed successfully' });
+
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to delete packaging',
+      details: err.message
+    });
+  }
 };
+
 
 // Remove variant packaging
-const removeVariantPackaging = (req, res) => {
-  const variantId = req.params.variantId;
+const removeVariantPackaging = async (req, res) => {
+  const { variantId } = req.params;
 
-  const deleteQuery = 'DELETE FROM variant_packagings WHERE variant_id = ?';
-  db.query(deleteQuery, [variantId], (err, result) => {
-    if (err) return res.status(500).json({ error: 'Failed to delete packaging', details: err.message });
+  try {
+    const [result] = await db.query(
+      `DELETE FROM product_packaging WHERE variant_id = ?`,
+      [variantId]
+    );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'No packaging found for this variant.' });
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        error: 'No packaging found for this variant.'
+      });
     }
 
     res.json({ message: 'Packaging removed successfully.' });
-  });
+
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to delete packaging',
+      details: err.message
+    });
+  }
 };
+
 
 
 // Get packaging for a variant
@@ -1387,6 +1803,189 @@ const getVariantPackaging = (req, res) => {
   });
 };
 
+const getPublicProducts = async (req, res) => {
+  try {
+    /* =====================================
+       PAGINATION
+    ====================================== */
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const offset = (page - 1) * limit;
+
+    /* =====================================
+       FILTERS
+    ====================================== */
+    const search = req.query.search?.trim() || '';
+    const category = req.query.category;
+    const sort = req.query.sort || 'latest';
+
+    let where = `WHERE p.is_active = 1`;
+    const params = [];
+
+    /* =====================================
+       SEARCH
+    ====================================== */
+    if (search) {
+      where += ` AND p.name LIKE ?`;
+      params.push(`%${search}%`);
+    }
+
+    /* =====================================
+       CATEGORY FILTER (ID OR SLUG)
+    ====================================== */
+    if (category) {
+      if (!isNaN(category)) {
+        where += ` AND p.category_id = ?`;
+        params.push(Number(category));
+      } else {
+        where += ` AND c.slug = ?`;
+        params.push(category);
+      }
+    }
+
+    /* =====================================
+       SORTING
+    ====================================== */
+    let orderBy = `ORDER BY p.created_at DESC`;
+
+    switch (sort) {
+      case 'price_low':
+        orderBy = `ORDER BY p.selling_price ASC`;
+        break;
+
+      case 'price_high':
+        orderBy = `ORDER BY p.selling_price DESC`;
+        break;
+
+      case 'name_asc':
+        orderBy = `ORDER BY p.name ASC`;
+        break;
+
+      case 'name_desc':
+        orderBy = `ORDER BY p.name DESC`;
+        break;
+
+      case 'latest':
+      default:
+        orderBy = `ORDER BY p.created_at DESC`;
+        break;
+    }
+
+    /* =====================================
+       FETCH PRODUCTS
+    ====================================== */
+    const [rows] = await db.query(
+      `
+      SELECT 
+        p.id,
+        p.name,
+        p.slug,
+        p.description,
+        p.selling_price,
+        p.image_url,
+        p.category_id,
+        p.created_at,
+        p.gst_rate, 
+        c.name AS category_name,
+        c.slug AS category_slug
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      ${where}
+      ${orderBy}
+      LIMIT ? OFFSET ?
+      `,
+      [...params, limit, offset]
+    );
+
+    /* =====================================
+       COUNT TOTAL
+    ====================================== */
+    const [[countResult]] = await db.query(
+      `
+      SELECT COUNT(*) as total
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      ${where}
+      `,
+      params
+    );
+
+    /* =====================================
+       RESPONSE
+    ====================================== */
+    return res.json({
+      success: true,
+      products: rows,
+      total: countResult.total,
+      page,
+      limit,
+      totalPages: Math.ceil(countResult.total / limit)
+    });
+
+  } catch (err) {
+    console.error('Error fetching public products:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+
+
+
+const getPublicProductById = async (req, res) => {
+  try {
+    const productId = req.params.id;
+
+    const [rows] = await db.query(
+      `
+      SELECT 
+        p.id,
+        p.name,
+        p.slug,
+        p.description,
+        p.selling_price,
+        p.selling_price_unit,
+        p.image_url,
+        p.gst_rate,
+        p.stock,
+        p.category_id,
+        c.name AS category_name,
+        c.slug AS category_slug
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.id = ?
+        AND p.is_active = 1
+      `,
+      [productId]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      product: rows[0]
+    });
+
+  } catch (error) {
+    console.error('Error fetching public product:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch product'
+    });
+  }
+};
+
+
+
+
 
 
 module.exports = {
@@ -1396,6 +1995,8 @@ module.exports = {
   getProductById,
   updateProduct,
   deleteProduct,
+  getPublicProducts,
+  getPublicProductById,
 
   // Variants
   createVariant,

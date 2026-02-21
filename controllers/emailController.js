@@ -1,7 +1,9 @@
 const nodemailer = require("nodemailer");
 const path = require("path");
 
-// Email sending function
+/* =====================================================
+   SEND LEAD ASSIGNMENT EMAIL
+===================================================== */
 const sendEmail = async (req, res) => {
   const {
     first_name,
@@ -16,40 +18,45 @@ const sendEmail = async (req, res) => {
     custom_fields,
     amount,
     notes,
-    salesperson_email, // New field for recipient email
+    salesperson_email,
   } = req.body;
 
+  if (!salesperson_email) {
+    return res.status(400).json({
+      success: false,
+      message: "Recipient email is required",
+    });
+  }
+
   try {
-    // Dynamically import nodemailer-express-handlebars
-    const { default: nodemailerExpressHandlebars } = await import("nodemailer-express-handlebars");
+    const { default: nodemailerExpressHandlebars } =
+      await import("nodemailer-express-handlebars");
 
     const transporter = nodemailer.createTransport({
-    //   host: 'logionsolutions.com',
-    //   port: 465,
-    //   secure: true,
-    service: 'gmail',
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
+      service: "gmail", // Keep simple
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
       },
-      debug: true, // Enable debug mode
-      logger: true, // Log connection details
     });
 
-    const hbsOptions = {
-      viewEngine: {
+    // Handlebars config
+    transporter.use(
+      "compile",
+      nodemailerExpressHandlebars({
+        viewEngine: {
+          extName: ".hbs",
+          partialsDir: path.resolve("./templates/"),
+          defaultLayout: false,
+        },
+        viewPath: path.resolve("./templates/"),
         extName: ".hbs",
-        partialsDir: path.resolve("./templates/"),
-        defaultLayout: false,
-      },
-      viewPath: path.resolve("./templates/"),
-      extName: ".handlebars",
-    };
+      })
+    );
 
-    transporter.use("compile", nodemailerExpressHandlebars(hbsOptions));
+    const formattedDate = follow_up_date
+      ? new Date(follow_up_date).toLocaleString()
+      : "N/A";
 
     const context = {
       first_name,
@@ -59,30 +66,32 @@ const sendEmail = async (req, res) => {
       company_name,
       lead_status,
       priority,
-      follow_up_date: new Date(follow_up_date).toLocaleString(), // Format the date
+      follow_up_date: formattedDate,
       assigned_salesperson,
-      custom_fields,
+      custom_fields: custom_fields || [],
       amount,
       notes,
     };
 
-
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: salesperson_email,
-      subject: `New Lead Assigned: ${first_name} ${last_name}`,
+      subject: `New Lead Assigned: ${first_name || ""} ${last_name || ""}`,
       template: "userassignment",
-      headers: {
-        'X-Priority': '3', // Normal priority
-        'X-Mailer': 'Nodemailer', // Specify the mailer
-      },
-      context: context
+      context,
     });
 
-    res.status(200).json({ success: true, message: "Email sent successfully!" });
+    return res.status(200).json({
+      success: true,
+      message: "Email sent successfully",
+    });
+
   } catch (error) {
-    console.error("Error sending email:", error);
-    res.status(500).json({ success: false, message: "Failed to send email." });
+    console.error("EMAIL ERROR:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send email",
+    });
   }
 };
 

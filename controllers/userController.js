@@ -1,95 +1,124 @@
-const db = require('../config/db');
 
 // Fetch all users
-exports.getAllUsers = (req, res) => {
-    const usersQuery = 'SELECT * FROM users';
+const db = require('../config/db');
 
-    db.query(usersQuery, (err, users) => {
-        if (err) {
-            return res.status(500).json({
-                error: 'Failed to fetch users',
-                details: err.message
-            });
-        }
+/* --------------------------------------------------
+   GET ALL USERS
+-------------------------------------------------- */
+exports.getAllUsers = async (req, res) => {
+  try {
+    const [users] = await db.query(
+      `SELECT * FROM users`
+    );
 
-        res.status(200).json(users);
+    return res.status(200).json(users);
+
+  } catch (err) {
+    console.error('getAllUsers error:', err);
+    return res.status(500).json({
+      error: 'Failed to fetch users',
+      details: err.message
     });
+  }
 };
 
-// Fetch a user by ID
-exports.getUserById = (req, res) => {
+
+/* --------------------------------------------------
+   GET USER BY ID
+-------------------------------------------------- */
+exports.getUserById = async (req, res) => {
+  try {
     const userId = req.params.id;
-    const userQuery = 'SELECT * FROM users WHERE id = ?';
 
-    db.query(userQuery, [userId], (err, user) => {
-        if (err) {
-            return res.status(500).json({
-                error: 'Failed to fetch user',
-                details: err.message
-            });
-        }
+    const [rows] = await db.query(
+      `SELECT * FROM users WHERE id = ?`,
+      [userId]
+    );
 
-        if (user.length === 0) {
-            return res.status(404).json({
-                message: 'User not found'
-            });
-        }
+    if (!rows.length) {
+      return res.status(404).json({
+        message: 'User not found'
+      });
+    }
 
-        res.status(200).json(user[0]);
+    return res.status(200).json(rows[0]);
+
+  } catch (err) {
+    console.error('getUserById error:', err);
+    return res.status(500).json({
+      error: 'Failed to fetch user',
+      details: err.message
     });
+  }
 };
 
-// Update a user by ID
-exports.updateUser = (req, res) => {
+
+/* --------------------------------------------------
+   UPDATE USER
+-------------------------------------------------- */
+exports.updateUser = async (req, res) => {
+  try {
     const userId = req.params.id;
-    const { name, email, role } = req.body; // Assuming the user has these fields
+    const { name, email, role } = req.body;
 
-    const updateQuery = 'UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?';
+    const [result] = await db.query(
+      `
+      UPDATE users
+      SET name = ?, email = ?, role = ?
+      WHERE id = ?
+      `,
+      [name, email, role, userId]
+    );
 
-    db.query(updateQuery, [name, email, role, userId], (err, result) => {
-        if (err) {
-            return res.status(500).json({
-                error: 'Failed to update user',
-                details: err.message
-            });
-        }
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        message: 'User not found'
+      });
+    }
 
-        if (result.affectedRows === 0) {
-            return res.status(404).json({
-                message: 'User not found'
-            });
-        }
-
-        res.status(200).json({
-            message: 'User updated successfully',
-            userId: userId
-        });
+    return res.status(200).json({
+      message: 'User updated successfully',
+      userId
     });
+
+  } catch (err) {
+    console.error('updateUser error:', err);
+    return res.status(500).json({
+      error: 'Failed to update user',
+      details: err.message
+    });
+  }
 };
 
-// Delete a user by ID
-exports.deleteUser = (req, res) => {
+
+/* --------------------------------------------------
+   DELETE USER
+-------------------------------------------------- */
+exports.deleteUser = async (req, res) => {
+  try {
     const userId = req.params.id;
 
-    const deleteQuery = 'DELETE FROM users WHERE id = ?';
+    const [result] = await db.query(
+      `DELETE FROM users WHERE id = ?`,
+      [userId]
+    );
 
-    db.query(deleteQuery, [userId], (err, result) => {
-        if (err) {
-            return res.status(500).json({
-                error: 'Failed to delete user',
-                details: err.message
-            });
-        }
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        message: 'User not found'
+      });
+    }
 
-        if (result.affectedRows === 0) {
-            return res.status(404).json({
-                message: 'User not found'
-            });
-        }
-
-        res.status(200).json({
-            message: 'User deleted successfully',
-            userId: userId
-        });
+    return res.status(200).json({
+      message: 'User deleted successfully',
+      userId
     });
+
+  } catch (err) {
+    console.error('deleteUser error:', err);
+    return res.status(500).json({
+      error: 'Failed to delete user',
+      details: err.message
+    });
+  }
 };

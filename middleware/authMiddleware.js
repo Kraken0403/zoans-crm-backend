@@ -1,9 +1,14 @@
 const jwt = require('jsonwebtoken');
 
-
 const authenticateJWT = (req, res, next) => {
+
+    // ✅ CRITICAL: allow preflight to pass
+    if (req.method === 'OPTIONS') {
+        return next();
+    }
+
     const authHeader = req.headers['authorization'];
-    const token = authHeader?.split(' ')[1]; // Extract the token
+    const token = authHeader?.split(' ')[1];
 
     if (!token) {
         return res.status(401).json({ error: 'Access denied. No token provided.' });
@@ -14,8 +19,10 @@ const authenticateJWT = (req, res, next) => {
             return res.status(401).json({ error: 'Invalid token.' });
         }
 
+        // 🔥 IMPORTANT: attach user
         req.user = decoded;
-        next();  // ONLY call next AFTER successful verification
+
+        next();
     });
 };
 

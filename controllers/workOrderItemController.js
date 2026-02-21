@@ -1,55 +1,102 @@
-const db = require('../config/db');
+const db = require('../config/db')
 
-// Get a single WorkOrderItem by ID
-const getWorkOrderItemById = (req, res) => {
-    const { id } = req.params;
-    
+/* --------------------------------------------------
+   GET WORK ORDER ITEMS BY WORK ORDER ID
+-------------------------------------------------- */
+const getWorkOrderItemById = async (req, res) => {
+  try {
+    const { id } = req.params
 
-    const query = `SELECT * FROM WorkOrderItems WHERE WorkOrderID = ?`;
+    const [rows] = await db.query(
+      `SELECT * FROM WorkOrderItems WHERE WorkOrderID = ?`,
+      [id]
+    )
 
-    db.query(query, [id], (err, results) => {
-        if (err) {
-            console.error('Error fetching WorkOrderItem:', err);
-            return res.status(500).json({ error: 'Error fetching WorkOrderItem.', details: err.message });
-        }
-
-        if (results.length === 0) {
-            return res.status(404).json({ message: 'WorkOrderItem not found' });
-        }
-
-        res.status(200).json(results);
-    });
-};
-
-
-// Create a new WorkOrderItem
-const createWorkOrderItem = (req, res) => {
-    const { WorkOrderID, ProductName, MakingSize, Number, Weight, TotalRft, TotalSqft, SlittingSize, Thickness } = req.body;
-
-    // Validate required fields
-    if (!WorkOrderID || !ProductName || !MakingSize || !Number || !Weight || !TotalRft || !TotalSqft || !SlittingSize || !Thickness) {
-        return res.status(400).json({ error: 'All fields are required.' });
+    if (!rows.length) {
+      return res.status(404).json({
+        message: 'WorkOrderItem not found'
+      })
     }
 
-    const query = `
-        INSERT INTO WorkOrderItems (WorkOrderID, ProductName, MakingSize, Number, Weight, TotalRft, TotalSqft, SlittingSize, Thickness) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
-    `;
+    return res.status(200).json(rows)
 
-    db.query(query, [WorkOrderID, ProductName, MakingSize, Number, Weight, TotalRft, TotalSqft, SlittingSize, Thickness], (err, result) => {
-        if (err) {
-            console.error('Error saving WorkOrderItem:', err);
-            return res.status(500).json({ error: 'Error saving WorkOrderItem.', details: err.message });
-        }
+  } catch (err) {
+    console.error('Error fetching WorkOrderItem:', err)
+    return res.status(500).json({
+      error: 'Error fetching WorkOrderItem.',
+      details: err.message
+    })
+  }
+}
 
-        res.status(201).json({ message: 'Work order item saved successfully.', workOrderItemID: result.insertId });
-    });
-};
+/* --------------------------------------------------
+   CREATE WORK ORDER ITEM
+-------------------------------------------------- */
+const createWorkOrderItem = async (req, res) => {
+  try {
+    const {
+      WorkOrderID,
+      ProductName,
+      MakingSize,
+      Number,
+      Weight,
+      TotalRft,
+      TotalSqft,
+      SlittingSize,
+      Thickness
+    } = req.body
 
+    /* ✅ Strict validation */
+    if (
+      !WorkOrderID ||
+      !ProductName ||
+      !MakingSize ||
+      Number == null ||
+      Weight == null ||
+      TotalRft == null ||
+      TotalSqft == null ||
+      !SlittingSize ||
+      !Thickness
+    ) {
+      return res.status(400).json({
+        error: 'All fields are required.'
+      })
+    }
 
+    const [result] = await db.query(
+      `
+      INSERT INTO WorkOrderItems
+      (WorkOrderID, ProductName, MakingSize, Number, Weight, TotalRft, TotalSqft, SlittingSize, Thickness)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        WorkOrderID,
+        ProductName,
+        MakingSize,
+        Number,
+        Weight,
+        TotalRft,
+        TotalSqft,
+        SlittingSize,
+        Thickness
+      ]
+    )
 
+    return res.status(201).json({
+      message: 'Work order item saved successfully.',
+      workOrderItemID: result.insertId
+    })
+
+  } catch (err) {
+    console.error('Error saving WorkOrderItem:', err)
+    return res.status(500).json({
+      error: 'Error saving WorkOrderItem.',
+      details: err.message
+    })
+  }
+}
 
 module.exports = {
-    getWorkOrderItemById,
-    createWorkOrderItem,
-};
+  getWorkOrderItemById,
+  createWorkOrderItem
+}

@@ -10,7 +10,7 @@ const resolveCategoryId = async (categoryPath) => {
   let parentId = null;
 
   for (const name of parts) {
-    const [rows] = await db.promise().query(
+    const [rows] = await db.query(
       'SELECT id FROM categories WHERE name = ? AND parent_id <=> ?',
       [name, parentId]
     );
@@ -39,7 +39,7 @@ const bulkImportProducts = async (req, res) => {
     errors: []
   };
 
-  const connection = await db.promise().getConnection();
+  const connection = await db.getConnection();
   await connection.beginTransaction();
 
   try {

@@ -5,19 +5,23 @@ const Handlebars = require('handlebars')
 require('./handlebarsHelpers')
 
 exports.loadTemplate = (data) => {
-  const mode = (data.mode || 'GENERAL').toLowerCase()
+  // ✅ TEMPLATE IS INDEPENDENT OF MODE
+  const templateName = data.template || 'general'
 
   const templatePath = path.join(
     __dirname,
-    `../templates/quotations/${mode}.html`
+    `../templates/quotations/${templateName}.html`
   )
 
   console.log('📄 USING TEMPLATE:', templatePath)
 
-  const cssPath = path.join(__dirname, '../templates/quotations/base.css')
+  const cssPath = path.join(
+    __dirname,
+    '../templates/quotations/base.css'
+  )
 
   if (!fs.existsSync(templatePath)) {
-    throw new Error(`Quotation template not found for mode: ${mode}`)
+    throw new Error(`Quotation template not found: ${templateName}.html`)
   }
 
   const templateSource = fs.readFileSync(templatePath, 'utf8')

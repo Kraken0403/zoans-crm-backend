@@ -1,117 +1,146 @@
-// controllers/workOrderController.js
-const db = require('../config/db');
+const db = require('../config/db')
 
-// Simple numbering: WO/{year}/{seq}
+/* --------------------------------------------------
+   Simple numbering: WO/{year}/{seq}
+-------------------------------------------------- */
 function generateWorkOrderNumber(sequence) {
-  const year = new Date().getFullYear();
-  return `WO/${year}/${String(sequence).padStart(4, '0')}`;
+  const year = new Date().getFullYear()
+  return `WO/${year}/${String(sequence).padStart(4, '0')}`
 }
 
-/**
- * INTERNAL helper – creates a work order for a given quotation inside an existing connection/tx.
- * Used by:
- *  - Auto creation when quotation becomes "approved"
- *  - Manual creation via POST /from-quotation
- *
- * @param {object} connection - MySQL connection (from db.getConnection)
- * @param {number} quotationId
- * @returns {Promise<{id, work_order_number, existing: boolean}>}
- */
- async function _createWorkOrderForQuotation(connection, quotationId) {
-  // 1) Load quotation + lead
-  const quotation = await new Promise((resolve, reject) => {
-    connection.query(
-      `
-      SELECT q.*, l.first_name, l.last_name
-      FROM quotations q
-      LEFT JOIN leads l ON q.lead_id = l.id
-      WHERE q.id = ?
-      `,
-      [quotationId],
-      (err, rows) => (err ? reject(err) : resolve(rows[0]))
-    )
-  })
+/* --------------------------------------------------
+   INTERNAL CREATION FUNCTION
+-------------------------------------------------- */
+async function _createWorkOrderForQuotation(connection, quotationId) {
 
-  if (!quotation) {
+  /* 1️⃣ Load quotation + FULL lead data */
+  const [quotationRows] = await connection.query(
+    `
+    SELECT 
+      q.*, 
+      l.first_name,
+      l.last_name,
+      l.company_name,
+      l.phone_number,
+      l.email,
+      l.gst_number
+    FROM quotations q
+    LEFT JOIN leads l ON q.lead_id = l.id
+    WHERE q.id = ?
+    `,
+    [quotationId]
+  )
+
+  const quotation = quotationRows[0]
+
+  if (!quotation)
     throw new Error('Quotation not found for work order creation')
-  }
 
-  // ❌ BLOCK NON-APPROVED QUOTATIONS
-  if (quotation.status !== 'approved') {
+  if (quotation.status !== 'approved')
     throw new Error('Work order can only be created from approved quotations')
+
+  /* 2️⃣ Prevent duplicates */
+  const [existingRows] = await connection.query(
+    `SELECT id FROM work_orders WHERE quotation_id = ? LIMIT 1`,
+    [quotationId]
+  )
+
+  if (existingRows.length) {
+    return {
+      id: existingRows[0].id,
+      work_order_number: null,
+      existing: true
+    }
   }
 
-  // 2) Prevent duplicates
-  const existing = await new Promise((resolve, reject) => {
-    connection.query(
-      `SELECT id FROM work_orders WHERE quotation_id = ? LIMIT 1`,
-      [quotationId],
-      (err, rows) => (err ? reject(err) : resolve(rows[0]))
-    )
-  })
+  /* 3️⃣ Load quotation items */
+  const [items] = await connection.query(
+    `SELECT * FROM quotation_items WHERE quotation_id = ?`,
+    [quotationId]
+  )
 
-  if (existing) {
-    return { id: existing.id, work_order_number: null, existing: true }
-  }
-
-  // 3) Load quotation items
-  const items = await new Promise((resolve, reject) => {
-    connection.query(
-      `SELECT * FROM quotation_items WHERE quotation_id = ?`,
-      [quotationId],
-      (err, rows) => (err ? reject(err) : resolve(rows))
-    )
-  })
-
-  if (!items.length) {
+  if (!items.length)
     throw new Error('Quotation has no items')
-  }
 
-  // 4) Generate sequence
-  const currentSeq = await new Promise((resolve, reject) => {
-    connection.query(
-      `SELECT MAX(work_order_sequence) AS maxSeq FROM work_orders`,
-      (err, rows) => (err ? reject(err) : resolve(rows[0]?.maxSeq || 0))
-    )
-  })
+  /* 4️⃣ Generate sequence */
+  const [seqRows] = await connection.query(
+    `SELECT MAX(work_order_sequence) AS maxSeq FROM work_orders`
+  )
 
-  const nextSeq = currentSeq + 1
+  const nextSeq = (seqRows[0]?.maxSeq || 0) + 1
   const work_order_number = generateWorkOrderNumber(nextSeq)
 
-  // 5) Insert work order header
-  const header = await new Promise((resolve, reject) => {
-    connection.query(
-      `
-      INSERT INTO work_orders
-      (
-        quotation_id,
-        work_order_number,
-        work_order_sequence,
-        status,
-        issue_date,
-        customer_name,
-        notes,
-        total_amount
-      )
-      VALUES (?, ?, ?, 'issued', CURDATE(), ?, ?, 0)
-      `,
-      [
-        quotation.id,
-        work_order_number,
-        nextSeq,
-        `${quotation.first_name || ''} ${quotation.last_name || ''}`.trim(),
-        quotation.notes || null
-      ],
-      (err, result) => (err ? reject(err) : resolve(result))
-    )
-  })
+  /* 5️⃣ Build immutable snapshot */
+  const billingSnapshot = {
+    name: `${quotation.first_name || ''} ${quotation.last_name || ''}`.trim(),
+    company: quotation.company_name || '',
+    phone: quotation.phone_number || '',
+    email: quotation.email || '',
+    gst: quotation.gst_number || ''
+  }
+
+  const shippingSnapshot = billingSnapshot
+
+/* 6️⃣ Insert header with snapshot + event details */
+const [header] = await connection.query(
+  `
+  INSERT INTO work_orders
+  (
+    quotation_id,
+    lead_id,
+    quotation_mode,
+    pax,
+    event_name,
+    event_date,
+    event_time,
+    event_location,
+    work_order_number,
+    work_order_sequence,
+    status,
+    issue_date,
+    customer_name,
+    customer_gst,
+    notes,
+    order_source,
+    shipping_snapshot,
+    billing_snapshot,
+    subtotal,
+    grand_total,
+    total_amount
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', CURDATE(), ?, ?, ?, 'CRM', ?, ?, 0, 0, 0)
+  `,
+  [
+    quotation.id,
+    quotation.lead_id || null,
+
+    quotation.quotation_mode || null,
+    quotation.pax || null,
+    quotation.event_name || null,
+    quotation.event_date || null,
+    quotation.event_time || null,
+    quotation.event_location || null,
+
+    work_order_number,
+    nextSeq,
+
+    billingSnapshot.name,
+    billingSnapshot.gst,
+    quotation.notes || null,
+    JSON.stringify(shippingSnapshot),
+    JSON.stringify(billingSnapshot)
+  ]
+)
+
+
 
   const workOrderId = header.insertId
 
-  // 6) Insert items (DO NOT TOUCH line_total)
+  /* 7️⃣ Insert items */
   let computedTotal = 0
 
   for (const it of items) {
+
     const baseQty = Number(it.quantity) || 0
     const pax = Number(quotation.pax) || 1
 
@@ -129,59 +158,61 @@ function generateWorkOrderNumber(sequence) {
 
     computedTotal += lineTotal
 
-    await new Promise((resolve, reject) => {
-      connection.query(
-        `
-        INSERT INTO work_order_items
-        (
-          work_order_id,
-          product_id,
-          variant_id,
-          description,
-          quantity,
-          unit_price,
-          discount,
-          tax
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        [
-          workOrderId,
-          it.product_id,
-          it.variant_id || null,
-          it.product_name || null,
-          effectiveQty,
-          unitPrice,
-          discount,
-          tax
-        ],
-        (err) => (err ? reject(err) : resolve())
+    await connection.query(
+      `
+      INSERT INTO work_order_items
+      (
+        work_order_id,
+        product_id,
+        product_name,
+        variant_id,
+        variant_name,
+        description,
+        quantity,
+        unit_price,
+        discount,
+        tax
       )
-    })
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        workOrderId,
+        it.product_id,
+        it.product_name || null,
+        it.variant_id || null,
+        it.variant_name || null,
+        it.product_name || null,
+        effectiveQty,
+        unitPrice,
+        discount,
+        tax
+      ]
+    )
+    
   }
 
-  // 7) Update work order total
-  await new Promise((resolve, reject) => {
-    connection.query(
-      `UPDATE work_orders SET total_amount = ? WHERE id = ?`,
-      [computedTotal, workOrderId],
-      (err) => (err ? reject(err) : resolve())
-    )
-  })
+  /* 8️⃣ Update totals */
+  await connection.query(
+    `
+    UPDATE work_orders
+    SET subtotal = ?, 
+        grand_total = ?, 
+        total_amount = ?
+    WHERE id = ?
+    `,
+    [computedTotal, computedTotal, computedTotal, workOrderId]
+  )
 
-  // 8) Lock & convert quotation
-  await new Promise((resolve, reject) => {
-    connection.query(
-      `
-      UPDATE quotations
-      SET status = 'converted',
-          is_locked = 1
-      WHERE id = ?
-      `,
-      [quotationId],
-      (err) => (err ? reject(err) : resolve())
-    )
-  })
+  /* 9️⃣ Lock quotation */
+  await connection.query(
+    `
+    UPDATE quotations
+    SET status = 'converted',
+        is_locked = 1
+    WHERE id = ?
+    `,
+    [quotationId]
+  )
 
   return {
     id: workOrderId,
@@ -190,163 +221,170 @@ function generateWorkOrderNumber(sequence) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// PUBLIC CONTROLLER METHODS
-// ---------------------------------------------------------------------------
+/* --------------------------------------------------
+   MANUAL CREATE FROM QUOTATION
+-------------------------------------------------- */
+const createFromQuotation = async (req, res) => {
+  const { quotationId } = req.params
+  const connection = await db.getConnection()
 
-// Manual: POST /api/work-orders/from-quotation/:quotationId
-const createFromQuotation = (req, res) => {
-  const { quotationId } = req.params;
+  try {
+    await connection.beginTransaction()
 
-  db.getConnection((err, conn) => {
-    if (err) {
-      return res
-        .status(500)
-        .json({ error: 'DB connection failed', details: err.message });
-    }
+    const wo = await _createWorkOrderForQuotation(connection, quotationId)
 
-    conn.beginTransaction(async (txErr) => {
-      if (txErr) {
-        conn.release();
-        return res
-          .status(500)
-          .json({ error: 'Transaction start failed', details: txErr.message });
-      }
+    await connection.commit()
+    connection.release()
 
+    return res.status(201).json({
+      message: wo.existing
+        ? 'Work order already existed for this quotation'
+        : 'Work order created from quotation',
+      work_order_id: wo.id,
+      work_order_number: wo.work_order_number,
+      already_existed: wo.existing
+    })
+
+  } catch (error) {
+    console.error('createFromQuotation error:', error)
+    await connection.rollback()
+    connection.release()
+    return res.status(500).json({ error: error.message })
+  }
+}
+
+/* --------------------------------------------------
+   GET ALL WORK ORDERS
+-------------------------------------------------- */
+const getWorkOrders = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `
+      SELECT 
+        wo.id,
+        wo.work_order_number,
+        wo.issue_date,
+        wo.customer_name,
+        wo.total_amount,
+        wo.status,
+        q.quotation_number
+      FROM work_orders wo
+      LEFT JOIN quotations q ON wo.quotation_id = q.id
+      ORDER BY wo.id DESC
+      `
+    )
+
+    return res.status(200).json({ workOrders: rows })
+
+  } catch (err) {
+    console.error('getWorkOrders error:', err)
+    return res.status(500).json({
+      error: 'Failed to fetch work orders',
+      details: err.message
+    })
+  }
+}
+
+/* --------------------------------------------------
+   GET WORK ORDER BY ID
+-------------------------------------------------- */
+const getWorkOrderById = async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const [rows] = await db.query(
+      `
+      SELECT 
+        wo.*,
+        q.quotation_number,
+        q.version,
+        q.parent_id,
+        q.total_amount AS quotation_total
+      FROM work_orders wo
+      LEFT JOIN quotations q ON wo.quotation_id = q.id
+      WHERE wo.id = ?
+      `,
+      [id]
+    )
+
+    if (!rows.length)
+      return res.status(404).json({ error: 'Work order not found' })
+
+    const wo = rows[0]
+
+    /* 🔥 Parse snapshot instead of joining leads */
+    if (wo.billing_snapshot) {
       try {
-        const wo = await _createWorkOrderForQuotation(conn, quotationId);
-
-        conn.commit((commitErr) => {
-          conn.release();
-          if (commitErr) {
-            return res
-              .status(500)
-              .json({ error: 'Commit failed', details: commitErr.message });
-          }
-
-          res.status(201).json({
-            message: wo.existing
-              ? 'Work order already existed for this quotation'
-              : 'Work order created from quotation',
-            work_order_id: wo.id,
-            work_order_number: wo.work_order_number,
-            already_existed: wo.existing
-          });
-        });
-      } catch (error) {
-        console.error('🔥 Error in createFromQuotation:', error);
-        conn.rollback(() => {
-          conn.release();
-          res.status(500).json({ error: error.message });
-        });
+    
+        const billing =
+          typeof wo.billing_snapshot === 'string'
+            ? JSON.parse(wo.billing_snapshot)
+            : wo.billing_snapshot   // already object
+    
+        wo.first_name = billing?.name || ''
+        wo.company_name = billing?.company || ''
+        wo.phone_number = billing?.phone || ''
+        wo.email = billing?.email || ''
+        wo.gst_number = billing?.gst || ''
+    
+      } catch (e) {
+        console.error('Snapshot parse error:', e)
       }
-    });
-  });
-};
-
-// GET /api/work-orders
-const getWorkOrders = (req, res) => {
-  const sql = `
-    SELECT wo.*, q.quotation_number
-    FROM work_orders wo
-    LEFT JOIN quotations q ON wo.quotation_id = q.id
-    ORDER BY wo.id DESC
-  `;
-
-  db.query(sql, (err, rows) => {
-    if (err) {
-      return res.status(500).json({
-        error: 'Failed to fetch work orders',
-        details: err.message
-      });
     }
+    
+    
 
-    res.status(200).json({ workOrders: rows });
-  });
-};
-
-// GET /api/work-orders/:id
-const getWorkOrderById = (req, res) => {
-  const { id } = req.params;
-
-  const headerSql = `
-    SELECT
-      wo.*,
-      q.quotation_number,
-      q.version,
-      q.parent_id,
-      q.total_amount AS quotation_total,
-      q.notes AS quotation_notes,
-      q.quotation_date,
-      q.valid_until,
-      l.first_name,
-      l.last_name,
-      l.company_name,
-      l.email,
-      l.phone_number,
-      l.gst_number,
-      l.lead_status,
-      l.priority,
-      l.notes AS lead_notes
-    FROM work_orders wo
-    LEFT JOIN quotations q ON wo.quotation_id = q.id
-    LEFT JOIN leads l ON q.lead_id = l.id
-    WHERE wo.id = ?
-  `;
-
-  db.query(headerSql, [id], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-
-    if (!rows.length) {
-      return res.status(404).json({ error: 'Work order not found' });
-    }
-
-    const wo = rows[0];
-
-    const itemsSql = `
+    const [items] = await db.query(
+      `
       SELECT woi.*, p.name AS product_name
       FROM work_order_items woi
       LEFT JOIN products p ON woi.product_id = p.id
       WHERE woi.work_order_id = ?
-    `;
+      `,
+      [id]
+    )
 
-    db.query(itemsSql, [id], (err2, items) => {
-      if (err2) {
-        return res.status(500).json({ error: err2.message });
-      }
+    wo.items = items || []
 
-      wo.items = items || [];
-      res.status(200).json(wo);
-    });
-  });
-};
+    return res.status(200).json(wo)
 
-// PUT /api/work-orders/:id/status
-const updateWorkOrderStatus = (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
-
-  if (!status) {
-    return res.status(400).json({ error: 'Status is required' });
+  } catch (err) {
+    console.error('getWorkOrderById error:', err)
+    return res.status(500).json({ error: err.message })
   }
+}
 
-  db.query(
-    `UPDATE work_orders SET status = ? WHERE id = ?`,
-    [status, id],
-    (err) => {
-      if (err) {
-        return res.status(500).json({
-          error: 'Failed to update status',
-          details: err.message
-        });
-      }
+/* --------------------------------------------------
+   UPDATE WORK ORDER STATUS
+-------------------------------------------------- */
+const updateWorkOrderStatus = async (req, res) => {
+  try {
+    const { id } = req.params
+    const { status } = req.body
 
-      res.status(200).json({ message: 'Work order status updated' });
-    }
-  );
-};
+    if (!status)
+      return res.status(400).json({ error: 'Status is required' })
+
+    const [result] = await db.query(
+      `UPDATE work_orders SET status = ? WHERE id = ?`,
+      [status, id]
+    )
+
+    if (!result.affectedRows)
+      return res.status(404).json({ error: 'Work order not found' })
+
+    return res.status(200).json({
+      message: 'Work order status updated'
+    })
+
+  } catch (err) {
+    console.error('updateWorkOrderStatus error:', err)
+    return res.status(500).json({
+      error: 'Failed to update status',
+      details: err.message
+    })
+  }
+}
 
 module.exports = {
   createFromQuotation,
@@ -354,4 +392,4 @@ module.exports = {
   getWorkOrderById,
   updateWorkOrderStatus,
   _createWorkOrderForQuotation
-};
+}

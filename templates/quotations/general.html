@@ -41,20 +41,59 @@
   <strong>{{quotation.first_name}} {{quotation.last_name}}</strong>
 </p>
 
+
+
+
 <!-- =========================
      COVER LETTER
 ========================= -->
-{{#if settings.cover_letter_html}}
+<!-- {{#if settings.cover_letter_html}}
   <div class="rich">
     {{{settings.cover_letter_html}}}
+  </div>
+{{/if}} -->
+
+<!-- =========================
+     EVENT DETAILS (CATERING ONLY)
+========================= -->
+{{#if quotation.catering.event_name}}
+  <div style="margin:20px 0; padding:14px 16px; border:1px solid #e5e7eb; border-radius:8px;">
+    <h3 style="margin:0 0 12px;">Event Details</h3>
+
+    <table style="width:100%; border-collapse:collapse;">
+      <tr>
+        <td style="width:30%; padding:6px 0;"><strong>Event Name</strong></td>
+        <td style="padding:6px 0;">{{quotation.catering.event_name}}</td>
+      </tr>
+
+      <tr>
+        <td><strong>Event Date</strong></td>
+        <td>{{quotation.catering.event_date}}</td>
+      </tr>
+
+      <tr>
+        <td><strong>Event Time</strong></td>
+        <td>{{quotation.catering.event_time}}</td>
+      </tr>
+
+      <tr>
+        <td><strong>Event Location</strong></td>
+        <td>{{quotation.catering.event_location}}</td>
+      </tr>
+
+      <tr>
+        <td><strong>PAX</strong></td>
+        <td>{{quotation.catering.pax}}</td>
+      </tr>
+    </table>
   </div>
 {{/if}}
 
 <!-- =========================
      CATEGORY-WISE ITEMS
 ========================= -->
-<div class="page-break"> 
-<h2 class="">Quotation Items</h2>
+<div class="page-break">
+<h2>Quotation Items</h2>
 
 {{#each quotation.categoryGroups}}
 
@@ -146,8 +185,12 @@
   </tr>
 </table>
 
-<div class="page-break"> 
-  {{#if settings.terms_conditions_html}}
+<!-- =========================
+     TERMS & FOOTER
+========================= -->
+<div class="page-break">
+
+{{#if settings.terms_conditions_html}}
   <hr style="margin-top:40px;" />
   <h3>Terms & Conditions</h3>
   <div class="rich">
@@ -155,16 +198,13 @@
   </div>
 {{/if}}
 
-<!-- =========================
-     FOOTER NOTES
-========================= -->
 {{#if settings.footer_notes_html}}
   <div class="rich" style="margin-top:20px;">
     {{{settings.footer_notes_html}}}
   </div>
 {{/if}}
-</div>
 
+</div>
 
 </body>
 </html>
